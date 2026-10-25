@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("image")
     rs = sub.add_parser("restore", help="put a full-flash snapshot (.bin) back on the chip")
     rs.add_argument("snapshot")
-    t = sub.add_parser("test",help="flash test firmware, run it, report pass/fail, cycles and energy")
+    t = sub.add_parser("test",help="flash test firmware, run it, report pass/fail and cycles (plus energy if a power meter is set up)")
     t.add_argument("image")
     t.add_argument("--timeout", type=float, default=10.0)
     rd = sub.add_parser("read", help="read memory")

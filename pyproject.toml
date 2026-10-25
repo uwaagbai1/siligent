@@ -9,6 +9,8 @@ description = "Lets AI agents flash, test and measure real microcontroller board
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [{ name = "Uwa Uwa Agbai" }]
+keywords = ["embedded", "stm32", "ai-agents", "mcp", "hardware-in-the-loop"]
 dependencies = [
     "pyocd>=0.36",
     "mcp>=2.0",
@@ -17,6 +19,10 @@ dependencies = [
 [project.optional-dependencies]
 ina219 = ["smbus2>=0.4"]
 dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/uwaagbai1/siligent"
+Issues = "https://github.com/uwaagbai1/siligent/issues"
 
 [project.scripts]
 siligent = "siligent.cli:main"
