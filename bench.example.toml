@@ -1,0 +1,25 @@
+# Copy to bench.toml (or ~/.config/siligent/bench.toml) and edit.
+# This file holds facts about your physical bench that software cannot see.
+
+[bench]
+# Flashing is refused until a person sets this to true, after checking the
+# bench is safe to flash (for example, unplugging test equipment that must not
+# be attached while flashing). Comment it out again when you are done.
+# flash_allowed = true
+
+# Pin the bench to one probe (from `siligent detect`). Optional.
+# probe_uid = "0123456789ABCDEF01234567"
+
+# Force a rules file instead of detecting the chip. Optional.
+# board = "stm32l476rg"
+
+[meter]
+# "none" until a meter is wired up. Energy is then reported as not measured.
+type = "none"
+
+# INA219 on a Linux I2C bus (pip install siligent[ina219]). Active current only:
+# it reads in ~100 uA steps with a 0.1 ohm shunt, too coarse for sleep current.
+# type = "ina219"
+# i2c_bus = 1
+# address = 0x40
+# shunt_ohms = 0.1

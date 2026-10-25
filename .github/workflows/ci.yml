@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install . ./plugins/siligent-ppk2 pytest
+      - run: pytest -q tests plugins/siligent-ppk2/tests
+
+  virtual-board:
+    name: Firmware on the virtual L476 (Renode)
+    runs-on: ubuntu-24.04
+    env:
+      RENODE_VERSION: "1.17.0"
+      RENODE_SHA256: 4ba7c68b59e2447f188ef4b4b112fcccd2802582c460beedceb63b84e5605a5f
+      # Fail instead of skipping if Renode or the firmware is missing.
+      SILIGENT_REQUIRE_RENODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Arm toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Build the test firmware
+        run: make -j3 -C firmware/l476
+      - name: Install Renode
+        run: |
+          curl -fsSL -o renode.tar.gz \
+            "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/renode-${RENODE_VERSION}.linux-portable.tar.gz"
+          echo "${RENODE_SHA256}  renode.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/renode" && tar -xzf renode.tar.gz -C "$HOME/renode" --strip-components=1
+          echo "RENODE=$HOME/renode/renode" >> "$GITHUB_ENV"
+      - run: pip install . pytest
+      - run: pytest -v tests/test_renode.py
+      - name: Demo script still runs
+        run: python scripts/demo.py --fast

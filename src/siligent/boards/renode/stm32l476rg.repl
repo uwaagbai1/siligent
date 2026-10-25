@@ -1,0 +1,41 @@
+// Virtual STM32L476RG for Renode. Renode ships no STM32L4 model, so this
+// describes just enough of the chip to run Siligent test firmware:
+// the Cortex-M4F core, NVIC, cycle counter, flash, SRAM and the ID registers.
+// Peripherals (GPIO, UART, timers, RCC) are not modelled yet.
+//
+// Cycle counts here come from simulated time, not from timing real
+// instructions, so they are not the same as on the real chip.
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4f"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 4000000
+    IRQ -> cpu@0
+
+// The real chip starts on its 4 MHz MSI clock.
+dwt: Miscellaneous.DWT @ sysbus 0xE0001000
+    frequency: 4000000
+
+// At boot the real chip mirrors flash at address 0, where the core fetches its vector table.
+flash: Memory.MappedMemory @ {
+        sysbus 0x08000000;
+        sysbus 0x00000000
+    }
+    size: 0x100000
+
+sram1: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x18000
+
+sram2: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x8000
+
+sysbus:
+    init:
+        // DBGMCU_IDCODE: revision 0x1007, device ID 0x415 (as read from the real board)
+        Tag <0xE0042000, 0xE0042003> "DBGMCU_IDCODE" 0x10076415
+        Tag <0xE0042004, 0xE0042007> "DBGMCU_CR" 0x0
+        // FLASH_OPTR with read protection at level 0, as on the real board
+        Tag <0x40022020, 0x40022023> "FLASH_OPTR" 0xFFEFF8AA

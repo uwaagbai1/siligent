@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "siligent": {
+      "type": "stdio",
+      "command": ".venv/bin/siligent-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

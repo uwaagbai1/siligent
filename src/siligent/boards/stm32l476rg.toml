@@ -1,0 +1,92 @@
+# Safety rules for the NUCLEO-L476RG (STM32L476RG).
+# Addresses from the STM32L4x6 reference manual (RM0351).
+
+[board]
+name = "NUCLEO-L476RG"
+chip = "STM32L476RG"
+dev_id = 0x415                # DBGMCU_IDCODE[11:0]
+idcode_address = 0xE0042000   # DBGMCU_IDCODE
+pyocd_target = "stm32l476rgtx"
+
+[memory]
+flash = { start = 0x08000000, size = 0x100000 }   # 1 MB
+ram = [
+    { name = "SRAM1", start = 0x20000000, size = 0x18000 },  # 96 KB
+    { name = "SRAM2", start = 0x10000000, size = 0x8000 },   # 32 KB
+]
+
+# Supply voltage a power meter may apply when it powers the chip (VDD, datasheet range).
+[power]
+vdd_min_mv = 1710
+vdd_max_mv = 3600
+
+# Flashing is refused unless read protection is at level 0 (RDP byte 0xAA).
+# This is the lesson from the locked F401RE.
+[protection]
+optr_address = 0x40022020     # FLASH_OPTR
+rdp_mask = 0xFF
+rdp_level0 = 0xAA
+
+# Host writes (from an agent, the CLI or the Python API) are allowed only here.
+[[allow_write]]
+name = "SRAM1"
+start = 0x20000000
+size = 0x18000
+
+[[allow_write]]
+name = "SRAM2"
+start = 0x10000000
+size = 0x8000
+
+[[allow_write]]
+name = "Peripherals"
+start = 0x40000000
+size = 0x20000000
+
+[[allow_write]]
+name = "Core debug (cycle counter, breakpoints)"
+start = 0xE0000000
+size = 0x100000
+
+# Forbidden ranges win over allowed ranges.
+[[forbid_write]]
+name = "FLASH registers"
+start = 0x40022000
+size = 0x400
+reason = "Flash control, option bytes, write and read protection. Only the flash tool may program flash, and it never touches option bytes."
+
+[[forbid_write]]
+name = "System memory, OTP and option bytes"
+start = 0x1FFF0000
+size = 0x10000
+reason = "OTP writes are permanent and option bytes can lock the chip."
+
+# Firmware containing these words is refused. It is a heuristic: it catches
+# firmware that would unlock the option bytes at run time, which no address
+# check can see. A compiler can split a constant across two instructions,
+# so the read-protection check before every flash is the real backstop.
+[[forbid_image_word]]
+value = 0x08192A3B
+reason = "Option-byte unlock key 1 (FLASH_OPTKEYR). Firmware that unlocks option bytes can set read protection and lock the chip."
+
+[[forbid_image_word]]
+value = 0x4C5D6E7F
+reason = "Option-byte unlock key 2 (FLASH_OPTKEYR). Firmware that unlocks option bytes can set read protection and lock the chip."
+
+# Pins whose mode a host write may not change. Mode 2 = alternate function.
+[gpio]
+base = 0x48000000
+stride = 0x400
+ports = "ABCDEFGH"
+
+[[protected_pin]]
+port = "A"
+pin = 13
+required_mode = 2
+reason = "SWDIO. Changing its mode cuts the debug link."
+
+[[protected_pin]]
+port = "A"
+pin = 14
+required_mode = 2
+reason = "SWCLK. Changing its mode cuts the debug link."

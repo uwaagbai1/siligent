@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "siligent-ppk2"
+version = "0.1.0"
+description = "Nordic Power Profiler Kit II (PPK2) power meter for Siligent."
+requires-python = ">=3.11"
+# GPL-2.0 because it uses ppk2-api (GPL-2.0). Kept as a separate package so
+# Siligent itself stays Apache-2.0.
+license = "GPL-2.0-only"
+dependencies = ["siligent", "ppk2-api>=0.9"]
+
+[project.entry-points."siligent.meters"]
+ppk2 = "siligent_ppk2:make_meter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
