@@ -11,6 +11,7 @@ from .errors import ImageError
 
 PT_LOAD = 1
 SHT_SYMTAB = 2
+ELF_MACHINES = {40: "cortex-m", 105: "msp430"}  # e_machine: EM_ARM, EM_MSP430
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class Image:
     path: str
     segments: list[Segment]
     symbols: dict[str, tuple[int, int]] = field(default_factory=dict)  # name -> (address, size)
+    arch: str | None = None  # from the ELF header; None for raw binaries
 
     @property
     def sha256(self) -> str:
@@ -42,10 +44,15 @@ class Image:
         return sum(len(s.data) for s in self.segments)
 
     def word_at(self, address: int) -> int | None:
+        data = self.bytes_at(address, 4)
+        return int.from_bytes(data, "little") if data is not None else None
+
+    def bytes_at(self, address: int, length: int) -> bytes | None:
+        """The image's bytes at address..address+length, if one segment holds all of them."""
         for s in self.segments:
-            if s.address <= address and address + 4 <= s.end:
+            if s.address <= address and address + length <= s.end:
                 off = address - s.address
-                return int.from_bytes(s.data[off : off + 4], "little")
+                return s.data[off : off + length]
         return None
 
 
@@ -65,6 +72,7 @@ def load_image(path: str | Path, base_address: int | None = None) -> Image:
 def _load_elf(raw: bytes, path: str) -> Image:
     if raw[4] != 1 or raw[5] != 1:
         raise ImageError("only 32-bit little-endian ELF files are supported")
+    (e_machine,) = struct.unpack_from("<H", raw, 0x12)
     (e_phoff, e_shoff) = struct.unpack_from("<II", raw, 0x1C)
     (e_phentsize, e_phnum, e_shentsize, e_shnum) = struct.unpack_from("<HHHH", raw, 0x2A)
 
@@ -90,4 +98,4 @@ def _load_elf(raw: bytes, path: str) -> Image:
 
     if not segments:
         raise ImageError("the ELF file has no loadable segments")
-    return Image(path, segments, symbols)
+    return Image(path, segments, symbols, arch=ELF_MACHINES.get(e_machine, f"elf-machine-{e_machine}"))

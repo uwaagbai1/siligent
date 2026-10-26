@@ -2,9 +2,12 @@
 # This file holds facts about your physical bench that software cannot see.
 
 [bench]
-# Flashing is refused until a person sets this to true, after checking the
-# bench is safe to flash (for example, unplugging test equipment that must not
-# be attached while flashing). Comment it out again when you are done.
+# Flashing is refused until a person allows it, after checking the bench is
+# safe to flash (for example, unplugging test equipment that must not be
+# attached while flashing). Comment it out again when you are done.
+# Either name the probes (serials from `siligent detect`) that may flash:
+# flash_allowed = ["0123456789ABCDEF01234567"]
+# or allow the one connected board (refused while several are connected):
 # flash_allowed = true
 
 # Pin the bench to one probe (from `siligent detect`). Optional.
@@ -13,9 +16,14 @@
 # Force a rules file instead of detecting the chip. Optional.
 # board = "stm32l476rg"
 
+# Supply a TI debugger (eZ-FET) gives the board, checked against the board's range.
+# vcc_mv = 3000
+
 [meter]
-# "none" until a meter is wired up. Energy is then reported as not measured.
-type = "none"
+# "auto": use a meter built into the probe when there is one (TI EnergyTrace on
+# MSP430 LaunchPads); otherwise energy is reported as not measured.
+# "none": never measure. "energytrace": require EnergyTrace.
+type = "auto"
 
 # INA219 on a Linux I2C bus (pip install siligent[ina219]). Active current only:
 # it reads in ~100 uA steps with a 0.1 ohm shunt, too coarse for sleep current.

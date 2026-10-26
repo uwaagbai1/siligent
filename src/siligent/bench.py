@@ -24,14 +24,15 @@ CONFIG_PATHS = [
 
 @dataclass
 class BenchConfig:
-    flash_allowed: bool | None = None
+    flash_allowed: bool | list[str] | None = None  # true, or the serials of the probes that may flash
     probe_uid: str | None = None
     board: str | None = None  # rules name or path; None = detect from the chip
-    meter: dict = field(default_factory=lambda: {"type": "none"})
+    meter: dict = field(default_factory=lambda: {"type": "auto"})
     log_path: Path = DATA_DIR / "actions.jsonl"
     snapshot_dir: Path = DATA_DIR / "snapshots"
     virtual: bool = False  # use a Renode virtual board instead of real hardware
     renode_path: str | None = None
+    vcc_mv: int = 3000  # supply a TI debugger gives the board; checked against the board's range
     source: str = "defaults"
 
     @classmethod
@@ -45,11 +46,12 @@ class BenchConfig:
                     flash_allowed=bench.get("flash_allowed"),
                     probe_uid=bench.get("probe_uid"),
                     board=bench.get("board"),
-                    meter=d.get("meter", {"type": "none"}),
+                    meter=d.get("meter", {"type": "auto"}),
                     log_path=Path(bench.get("log_path", DATA_DIR / "actions.jsonl")).expanduser(),
                     snapshot_dir=Path(bench.get("snapshot_dir", DATA_DIR / "snapshots")).expanduser(),
                     virtual=bool(bench.get("virtual", False)),
                     renode_path=bench.get("renode_path"),
+                    vcc_mv=int(bench.get("vcc_mv", 3000)),
                     source=str(p),
                 )
         if path:
@@ -69,9 +71,9 @@ def meter_plugins() -> dict:
 def make_meter(cfg: dict, gate: SafetyGate | None) -> PowerMeter | None:
     """Build the configured meter. A meter that powers the board ("mode = source")
     is checked against the board's supply range here, before any plugin code runs."""
-    kind = cfg.get("type", "none").lower()
-    if kind == "none":
-        return None
+    kind = cfg.get("type", "auto").lower()
+    if kind in ("none", "auto"):
+        return None  # "auto": no external meter; the bench may still use one built into the probe
     if cfg.get("mode") == "source":
         if gate is None:
             raise SiligentError("connect to the board first: its rules decide the allowed supply voltage")
@@ -89,7 +91,7 @@ def make_meter(cfg: dict, gate: SafetyGate | None) -> PowerMeter | None:
     plugins = meter_plugins()
     if kind in plugins:
         return plugins[kind].load()(cfg)
-    available = ", ".join(["none", "ina219", *sorted(plugins)])
+    available = ", ".join(["auto", "none", "energytrace", "ina219", *sorted(plugins)])
     raise SiligentError(f"unknown meter type '{kind}' (available: {available})")
 
 
@@ -110,19 +112,53 @@ class Bench:
         if self.config.virtual:
             return None  # a physical meter cannot measure a simulated chip
         if not self._meter_made:
-            self._meter = make_meter(self.config.meter, self.probe.gate if self.probe else None)
+            kind = self.config.meter.get("type", "auto").lower()
+            builtin = getattr(self._backend, "energy_meter", None)
+            if kind in ("auto", "energytrace") and builtin is not None:
+                self._meter = builtin()  # e.g. TI EnergyTrace, measured by the debugger itself
+            elif kind == "energytrace":
+                raise SiligentError("meter type 'energytrace' needs a TI debugger with EnergyTrace")
+            else:
+                self._meter = make_meter(self.config.meter, self.probe.gate if self.probe else None)
             self._meter_made = True
         return self._meter
+
+    def select_probe(self):
+        """Pick the probe to use. A pinned probe that is missing is an error, never a
+        reason to fall back to another board: an agent could flash the wrong one."""
+        from .detect import scan_usb
+
+        connected = [p for p in scan_usb() if p.supported]
+        self._connected_probes = len(connected)
+        listing = ", ".join(f"{p.serial} ({p.kind})" for p in connected) or "none"
+        want = self.config.probe_uid
+        if want:
+            for p in connected:
+                if p.serial == want:
+                    return p
+            raise SiligentError(
+                f"probe {want} (from {self.config.source}) is not connected. Connected: {listing}. "
+                "Choose one with --probe <serial>, or change probe_uid in bench.toml."
+            )
+        if len(connected) == 1:
+            return connected[0]
+        if not connected:
+            return None
+        raise SiligentError(f"more than one probe is connected ({listing}); choose one with --probe <serial>")
 
     def connect(self) -> GuardedProbe:
         if self.config.virtual:
             return self._connect_virtual()
+        chosen = self.select_probe()
+        if chosen is not None and chosen.backend == "msp430":
+            return self._connect_msp430(chosen.serial)
         from .probes.pyocd_backend import PyOCDBackend
 
         # Read the chip ID with a generic Cortex-M connection, then load the matching rules.
         hint = load_rules(self.config.board) if self.config.board else None
         backend = PyOCDBackend(
-            target=hint.pyocd_target if hint else "cortex_m", unique_id=self.config.probe_uid
+            target=hint.pyocd_target if hint else "cortex_m",
+            unique_id=chosen.serial if chosen is not None else self.config.probe_uid,
         )
         backend.open()
         try:
@@ -130,7 +166,7 @@ class Bench:
             if rules is None:
                 # DBGMCU_IDCODE lives at 0xE0042000 on STM32 F4/L4; other families add their own rules.
                 dev_id = backend.read32(0xE0042000) & 0xFFF
-                rules = rules_for_dev_id(dev_id)
+                rules = rules_for_dev_id(dev_id, probe="pyocd")
                 if rules is None:
                     raise SafetyRefusal(
                         "board.unknown",
@@ -143,11 +179,48 @@ class Bench:
         except Exception:
             backend.close()
             raise
-        gate = SafetyGate(rules, BenchState(flash_allowed=self.config.flash_allowed))
+        gate = SafetyGate(rules, self._bench_state(backend.unique_id))
         self._backend = backend
         self.rules = rules
         self.probe = GuardedProbe(backend, rules, gate, self.log, self.config.snapshot_dir)
         self.log.record("connect", "ok", probe=backend.unique_id, board=rules.name)
+        return self.probe
+
+    def _bench_state(self, probe_uid: str | None) -> BenchState:
+        return BenchState(
+            flash_allowed=self.config.flash_allowed,
+            probe_uid=probe_uid,
+            probes_connected=getattr(self, "_connected_probes", 1),
+        )
+
+    def _connect_msp430(self, serial: str) -> GuardedProbe:
+        from .probes.msp430_backend import MSP430Backend
+
+        hint = load_rules(self.config.board) if self.config.board else None
+        backend = MSP430Backend(unique_id=serial, vcc_mv=self.config.vcc_mv)
+        if hint is not None:
+            SafetyGate(hint).check_supply_voltage(backend.vcc_mv)  # before the debugger powers the board
+        backend.open()
+        try:
+            dev_id = backend.read32(0x1A04) & 0xFFFF  # TLV device ID, the same place on MSP430 FR5xx/FR6xx
+            rules = hint or rules_for_dev_id(dev_id, probe="msp430")
+            if rules is None:
+                raise SafetyRefusal(
+                    "board.unknown",
+                    f"No safety rules for this chip ({backend.chip}, device ID {hex(dev_id)}), so only reads are allowed.",
+                    dev_id=hex(dev_id),
+                )
+            gate = SafetyGate(rules, self._bench_state(backend.unique_id))
+            gate.check_supply_voltage(backend.vcc_mv)
+            if backend.measured_vcc_mv:
+                gate.check_supply_voltage(backend.measured_vcc_mv)
+        except Exception:
+            backend.close()
+            raise
+        self._backend = backend
+        self.rules = rules
+        self.probe = GuardedProbe(backend, rules, gate, self.log, self.config.snapshot_dir)
+        self.log.record("connect", "ok", probe=backend.unique_id, board=rules.name, chip=backend.chip)
         return self.probe
 
     def _connect_virtual(self) -> GuardedProbe:

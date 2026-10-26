@@ -8,3 +8,4 @@ bench.toml
 .pytest_cache/
 .claude/settings.local.json
 CLAUDE.md
+dist/

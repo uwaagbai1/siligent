@@ -12,21 +12,29 @@ nice -n 19 make -j3 -C firmware/l476     # needs arm-none-eabi-gcc
 .venv/bin/python scripts/demo.py         # needs Renode, see "Virtual board"
 ```
 
-## Status: early alpha, working on a real NUCLEO-L476RG
+## Status: early alpha, working on two real boards
 
-One board so far (STM32L476RG over ST-LINK). Expect the interfaces to change.
+| Board | Chip | Probe | Energy |
+|---|---|---|---|
+| NUCLEO-L476RG | STM32L476RG (Cortex-M4) | ST-LINK, via pyOCD | needs an external meter |
+| MSP-EXP430FR5994 | MSP430FR5994 (16-bit, FRAM) | on-board eZ-FET, via TI's libmsp430 | built in: TI EnergyTrace |
 
-- Detects the ST-LINK by USB ID and the chip by its device ID, then loads that board's rules.
+Expect the interfaces to change.
+
+- Detects probes by USB ID and chips by their device ID, then loads that board's rules.
 - Flashes through a safety gate; refusals say which rule fired and why.
-- Runs on-device tests and reports pass/fail and CPU cycles per test.
-- Backs up flash before every write; `siligent restore` puts a backup back.
+- Runs on-device tests and reports pass/fail and CPU cycles per test, plus
+  measured energy on the MSP430 LaunchPad.
+- Backs up program memory before every write; `siligent restore` puts a backup back.
 - Logs every action, allowed or refused.
 - MCP server so agents (Claude Code, Cursor, others) can use all of the above.
+- With several boards connected, pick one with `--probe <serial>` (agent tools take `probe`).
+  A pinned probe that is missing is an error, never a reason to use another board.
 
-Not done yet: energy numbers on real hardware. Two meter drivers are written
-and unit-tested but have not run on a real meter: the INA219 (active current
-only) and the Nordic PPK2 (down to sub-microamp, see `plugins/siligent-ppk2`,
-a separate GPL-2.0 package because its library is GPL).
+Two external meter drivers are written and unit-tested but have not run on a
+real meter yet: the INA219 (active current only) and the Nordic PPK2 (down to
+sub-microamp, see `plugins/siligent-ppk2`, a separate GPL-2.0 package because
+its library is GPL).
 
 Meters are plugins: a package registers a factory under the
 `siligent.meters` entry-point group. When a meter powers the board, the core
@@ -65,7 +73,7 @@ cp bench.example.toml bench.toml   # then set flash_allowed = true when the benc
 ```
 
 Every command prints JSON. Other commands: `rules`, `check` (image checks
-without hardware), `read`, `write`, `restore`.
+without hardware; the board is worked out from the file), `read`, `write`, `restore`.
 
 Agent access (MCP, stdio): run `siligent-mcp`. Tools: `detect_hardware`,
 `board_rules`, `check_image`, `flash`, `run_tests`, `read_memory`,
@@ -75,7 +83,9 @@ Agent access (MCP, stdio): run `siligent-mcp`. Tools: `detect_hardware`,
 
 Rules live in `src/siligent/boards/stm32l476rg.toml`.
 
-- Flash only after a person confirms the bench is safe to flash (`flash_allowed = true` in `bench.toml`).
+- Flash only after a person confirms the bench is safe to flash: `flash_allowed`
+  in `bench.toml`, either a list of probe serials or `true`. `true` is refused
+  when several boards are connected, so allowing one board never allows another.
 - Flash only if the chip matches the rules (device ID 0x415) and read protection is level 0.
 - Firmware must sit inside flash, start with a valid vector table, and must not
   contain the option-byte unlock keys (heuristic: catches firmware that could lock the chip).
@@ -85,9 +95,67 @@ Rules live in `src/siligent/boards/stm32l476rg.toml`.
 - The core is halted (with a reset) before erasing: erasing under running
   firmware locks the core up.
 
+## MSP430FR5994 LaunchPad
+
+```sh
+nice -n 19 make -j3 -C firmware/msp430fr5994    # TI's cl430, from Code Composer Studio
+.venv/bin/siligent check firmware/msp430fr5994/build/demo_refused.elf   # refused: would lock the debug port
+.venv/bin/siligent test firmware/msp430fr5994/build/tests.elf
+```
+
+- Needs TI's debug library, `libmsp430.so`, which comes with Code Composer
+  Studio. It is found under `~/ti/ccs*/` or via `SILIGENT_LIBMSP430=`.
+- Siligent never updates the debugger's firmware. If the library asks for an
+  update, it stops and says so; update once with TI's tools.
+- The eZ-FET supplies about 3.3 V whatever is asked for (3.31 V measured); the
+  measured supply is checked against the chip's range too.
+- `siligent restore` writes the whole of program memory back (FRAM is not
+  erased first, so skipping bytes would leave newer code behind) and reads it
+  back to confirm.
+- The firmware builds with TI's `cl430` compiler from CCS (`TI_CGT=` to point
+  elsewhere). CI does not build it yet.
+
+What the gate enforces on this chip (`src/siligent/boards/msp430fr5994.toml`):
+
+- 0xFF80-0xFF8F hold the JTAG, BSL and IP-encapsulation signatures. Writing
+  0x5555 to the JTAG signature locks the debug port for good. Firmware may only
+  contain 0xFF there, and those bytes must read 0xFF on the chip before any flash.
+- Firmware containing `mov #0x5555, &0xFF80` (or 0xAAAA) is refused: code that
+  would lock the chip at run time.
+- Host writes only to RAM, LEA RAM and peripherals; never to FRAM, the
+  bootloader, the device descriptor (calibration data), the FRAM controller or
+  the memory protection unit.
+- Firmware built for another architecture is refused (`image.wrong_architecture`).
+
+### Energy with TI EnergyTrace
+
+On this LaunchPad the debugger measures energy itself, so `siligent test`
+reports it with no extra hardware (`[meter] type = "auto"`, the default). An
+example run of `firmware/msp430fr5994/build/tests.elf` at 1 MHz:
+
+| | Measured |
+|---|---|
+| Energy while the tests ran | 14.2-15.1 uJ (14 runs) |
+| Time | 21-22 ms (the tests' own CPU time: 17.3 ms) |
+| Average current | about 200 uA at 3.29 V |
+| Sleep current afterwards (LPM4) | below EnergyTrace's resolution |
+
+What this is and is not:
+
+- It is the whole target side of the board, not the chip alone.
+- The chip runs with the debugger released: attached, the debugger keeps the
+  clocks running and low-power modes never show.
+- The harness wakes EnergyTrace with 0.2 s of busy work, waits 0.3 s in LPM0,
+  runs the tests, then sleeps in LPM4. The tests are found as the step up
+  between the wait and the sleep, using the debugger's energy counter. If the
+  step's length does not match the tests' CPU time, no energy is claimed.
+- Per-test figures (`energy_uj_estimate`) split the measured total by CPU time.
+  They are estimates; measuring each test separately needs markers.
+
 ## Writing on-device tests
 
-See `firmware/l476/tests.c`:
+The harness is in `firmware/common/` and is shared by both boards; see
+`firmware/common/tests.c`:
 
 ```c
 #include "bp_test.h"
@@ -95,6 +163,8 @@ BP_TEST(my_test) { BP_ASSERT_EQ(add(2, 2), 4); }
 ```
 
 Results go to a RAM mailbox (`bp_results`) that the host reads after the run.
+Each chip supplies a cycle counter in `bp_port.c`: the DWT counter on the
+STM32, Timer_A on the MSP430 (which has none).
 
 ## Tests
 

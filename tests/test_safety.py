@@ -141,3 +141,21 @@ def test_unreadable_option_register_refused(gate):
 
 def test_read_protection_level1_refused(gate):
     assert refused(gate.check_read_protection, 0xFFEFF800) == "chip.read_protection"
+
+
+def test_flash_allowed_list_names_the_boards(rules):
+    allowed = SafetyGate(rules, BenchState(flash_allowed=["A1"], probe_uid="A1", probes_connected=2))
+    allowed.check_bench_for_flash()
+    other = SafetyGate(rules, BenchState(flash_allowed=["A1"], probe_uid="B2", probes_connected=2))
+    assert refused(other.check_bench_for_flash) == "bench.flash_not_allowed"
+
+
+def test_flash_allowed_true_is_refused_with_several_boards(rules):
+    gate = SafetyGate(rules, BenchState(flash_allowed=True, probe_uid="A1", probes_connected=2))
+    assert refused(gate.check_bench_for_flash) == "bench.flash_not_allowed"
+    SafetyGate(rules, BenchState(flash_allowed=True, probe_uid="A1", probes_connected=1)).check_bench_for_flash()
+
+
+def test_empty_flash_allowed_list_refuses(rules):
+    gate = SafetyGate(rules, BenchState(flash_allowed=[], probe_uid="A1"))
+    assert refused(gate.check_bench_for_flash) == "bench.flash_not_allowed"

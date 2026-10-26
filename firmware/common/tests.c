@@ -14,7 +14,7 @@ static uint32_t crc32(const uint8_t *p, uint32_t n)
 
 static uint32_t isqrt(uint32_t x)
 {
-    uint32_t r = 0, bit = 1u << 30;
+    uint32_t r = 0, bit = (uint32_t)1 << 30; /* not 1u: int is 16 bits on MSP430 */
     while (bit > x)
         bit >>= 2;
     while (bit) {
@@ -50,7 +50,7 @@ BP_TEST(integer_sqrt)
     BP_ASSERT_EQ(isqrt(x), 1000u);
 }
 
-BP_TEST(fpu_multiply)
+BP_TEST(float_multiply)
 {
     volatile float a = 1.5f, b = 2.0f;
     BP_ASSERT(a * b == 3.0f);

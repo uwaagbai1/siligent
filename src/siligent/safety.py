@@ -13,12 +13,16 @@ from .rules import BoardRules
 class BenchState:
     """Facts about the physical bench that software cannot see for itself.
 
-    `flash_allowed` must be set to True by a person in bench.toml, after
-    checking the bench is safe to flash (for example, that test equipment
-    which could be damaged is unplugged). Unset (None) or False refuses.
+    `flash_allowed` must be set by a person in bench.toml, after checking the
+    bench is safe to flash (for example, that test equipment which could be
+    damaged is unplugged). Either a list of probe serials that may flash, or
+    true, which only counts while a single probe is connected: with several
+    boards on the bench, a person must say which. Unset or false refuses.
     """
 
-    flash_allowed: bool | None = None
+    flash_allowed: bool | list[str] | None = None
+    probe_uid: str | None = None
+    probes_connected: int = 1
 
 
 class SafetyGate:
@@ -29,7 +33,25 @@ class SafetyGate:
     # Bench preconditions -------------------------------------------------
 
     def check_bench_for_flash(self) -> None:
-        if self.bench.flash_allowed is not True:
+        allowed = self.bench.flash_allowed
+        if isinstance(allowed, list):
+            if self.bench.probe_uid in allowed:
+                return
+            raise SafetyRefusal(
+                "bench.flash_not_allowed",
+                f"Flashing is allowed only for probes {', '.join(map(str, allowed)) or '(none)'}; "
+                f"this board's probe is {self.bench.probe_uid}. A person must add it to flash_allowed "
+                "in bench.toml after checking this board is safe to flash.",
+                probe=self.bench.probe_uid,
+            )
+        if allowed is True and self.bench.probes_connected > 1:
+            raise SafetyRefusal(
+                "bench.flash_not_allowed",
+                "flash_allowed = true is ambiguous with several boards connected. List the probes "
+                "that may flash instead, e.g. flash_allowed = [\"<serial>\"], after checking each board.",
+                probes_connected=self.bench.probes_connected,
+            )
+        if allowed is not True:
             raise SafetyRefusal(
                 "bench.flash_not_allowed",
                 "A person has not confirmed this bench is safe to flash. Check the bench "
@@ -89,6 +111,13 @@ class SafetyGate:
     # Firmware images -----------------------------------------------------
 
     def check_image(self, image: Image) -> None:
+        if image.arch is not None and image.arch != self.rules.arch:
+            raise SafetyRefusal(
+                "image.wrong_architecture",
+                f"This firmware is built for {image.arch}, but {self.rules.chip} is {self.rules.arch}.",
+                image_arch=image.arch,
+                board_arch=self.rules.arch,
+            )
         flash = self.rules.flash
         for seg in image.segments:
             if not flash.contains(seg.address, len(seg.data)):
@@ -99,8 +128,48 @@ class SafetyGate:
                     address=hex(seg.address),
                     length=len(seg.data),
                 )
-        self._check_vector_table(image)
+        self._check_erased_only(image)
+        if self.rules.arch == "msp430":
+            self._check_msp430_reset_vector(image)
+        else:
+            self._check_vector_table(image)
         self._check_forbidden_words(image)
+
+    def _check_erased_only(self, image: Image) -> None:
+        """Bytes that lock the chip when programmed (MSP430 JTAG/BSL/IPE signatures)
+        may appear in an image only as 0xFF, the erased value."""
+        for region in self.rules.image_erased_only:
+            for seg in image.segments:
+                if not region.overlaps(seg.address, len(seg.data)):
+                    continue
+                lo, hi = max(region.start, seg.address), min(region.end, seg.end)
+                chunk = seg.data[lo - seg.address : hi - seg.address]
+                bad = next((i for i, b in enumerate(chunk) if b != 0xFF), None)
+                if bad is not None:
+                    raise SafetyRefusal(
+                        "image.protection_signature",
+                        f"Firmware writes {hex(chunk[bad])} into {region.name} at {hex(lo + bad)}. {region.reason}",
+                        address=hex(lo + bad),
+                        region=region.name,
+                    )
+
+    def _check_msp430_reset_vector(self, image: Image) -> None:
+        addr = self.rules.reset_vector_address
+        if addr is None:
+            raise SafetyRefusal("image.no_reset_vector", "These board rules give no reset vector address.")
+        data = image.bytes_at(addr, 2)
+        if data is None:
+            raise SafetyRefusal(
+                "image.no_reset_vector",
+                f"Firmware does not set the reset vector at {hex(addr)}, so the chip would not boot it.",
+            )
+        reset = int.from_bytes(data, "little")
+        if reset & 1 or not self.rules.flash.contains(reset) or reset >= addr - 0x80:
+            raise SafetyRefusal(
+                "image.bad_reset_vector",
+                f"Reset handler {hex(reset)} must be an even address in program memory below the vectors.",
+                reset_vector=hex(reset),
+            )
 
     def _check_vector_table(self, image: Image) -> None:
         start = self.rules.flash.start
@@ -154,6 +223,23 @@ class SafetyGate:
             )
 
     # Chip state ------------------------------------------------------------
+
+    def check_protection_bytes(self, data: bytes) -> None:
+        """MSP430-style check: the protection signatures must read as erased (0xFF)."""
+        p = self.rules.protection
+        if data and all(b == 0 for b in data):
+            raise SafetyRefusal(
+                "chip.unreadable",
+                f"The protection signatures at {hex(p.address)} read as all zeros. The link may be bad; "
+                "protection state is unknown, so flashing is refused.",
+            )
+        if any(b != 0xFF for b in data):
+            raise SafetyRefusal(
+                "chip.protected",
+                f"The protection signatures at {hex(p.address)} are programmed ({data.hex()}). The chip may "
+                f"be locked or have protected memory. {p.reason} A person must handle this.",
+                signatures=data.hex(),
+            )
 
     def check_read_protection(self, optr: int) -> None:
         if optr == 0:

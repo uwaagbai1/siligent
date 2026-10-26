@@ -1,0 +1,112 @@
+# Safety rules for the MSP-EXP430FR5994 LaunchPad (MSP430FR5994).
+# Addresses from TI's msp430fr5994 linker files and header, and the
+# MSP430FR58xx/59xx/68xx/69xx family user's guide (SLAU367).
+
+[board]
+name = "MSP-EXP430FR5994"
+chip = "MSP430FR5994"
+arch = "msp430"
+probe = "msp430"
+dev_id = 0x82A1               # device ID in the TLV block
+idcode_address = 0x1A04       # TLV device ID (16 bits)
+idcode_mask = 0xFFFF
+reset_vector_address = 0xFFFE
+
+[memory]
+# Program memory: lower FRAM 0x4000-0xFF7F, the signatures and vectors
+# 0xFF80-0xFFFF, then upper FRAM 0x10000-0x43FFF. One continuous range.
+flash = { name = "FRAM", start = 0x4000, size = 0x40000 }
+ram = [
+    { name = "RAM", start = 0x1C00, size = 0x1000 },
+    { name = "LEA RAM", start = 0x2C00, size = 0x1000 },
+]
+snapshot_page = 512   # FRAM has no erase pages; this is just the backup granularity
+
+# Supply voltage a power meter may apply when it powers the chip (datasheet range).
+[power]
+vdd_min_mv = 1800
+vdd_max_mv = 3600
+
+# Before every flash, these bytes must read as 0xFF: not locked, no protected memory.
+[protection]
+kind = "erased"
+address = 0xFF80
+size = 16
+reason = "0xFF80 JTAG signature, 0xFF84 BSL signature, 0xFF88 IP-encapsulation signature."
+
+# Firmware may only contain 0xFF in these bytes.
+[[image_erased_only]]
+name = "JTAG signature"
+start = 0xFF80
+size = 4
+reason = "Programming it disables the debug port: 0x5555 locks it, 0xAAAA locks it behind a password."
+
+[[image_erased_only]]
+name = "BSL signature"
+start = 0xFF84
+size = 4
+reason = "Programming it can disable the bootloader, the other way back into a chip."
+
+[[image_erased_only]]
+name = "IP-encapsulation signature"
+start = 0xFF88
+size = 8
+reason = "Programming it turns on IP encapsulation, which hides memory from the debugger until a full erase."
+
+# Host writes (from an agent, the CLI or the Python API) are allowed only here.
+[[allow_write]]
+name = "RAM"
+start = 0x1C00
+size = 0x1000
+
+[[allow_write]]
+name = "LEA RAM"
+start = 0x2C00
+size = 0x1000
+
+[[allow_write]]
+name = "Peripherals"
+start = 0x0000
+size = 0x1000
+
+# Forbidden ranges win over allowed ranges.
+[[forbid_write]]
+name = "FRAM controller"
+start = 0x0140
+size = 0x10
+reason = "Wrong FRAM wait states make program memory reads fail at higher clock speeds."
+
+[[forbid_write]]
+name = "Memory protection unit and IP encapsulation"
+start = 0x05A0
+size = 0x10
+reason = "Can make program memory unwritable or hidden from the debugger."
+
+[[forbid_write]]
+name = "Bootloader (BSL)"
+start = 0x1000
+size = 0x800
+reason = "TI's bootloader. Only TI tools should change it."
+
+[[forbid_write]]
+name = "Device descriptor (TLV)"
+start = 0x1A00
+size = 0x100
+reason = "Factory calibration and device ID data."
+
+[[forbid_write]]
+name = "FRAM"
+start = 0x4000
+size = 0x40000
+reason = "Program memory and the lock signatures. Only the flash tool may write it, after its checks."
+
+# Firmware containing these words is refused. A heuristic: it catches code that
+# writes a lock value to the JTAG signature at run time ("mov #0x5555, &0xFF80"
+# encodes as ... 55 55 80 FF), which no address check can see.
+[[forbid_image_word]]
+value = 0xFF805555
+reason = "Code that writes 0x5555 to the JTAG signature (0xFF80). That permanently locks the debug port."
+
+[[forbid_image_word]]
+value = 0xFF80AAAA
+reason = "Code that writes 0xAAAA to the JTAG signature (0xFF80). That locks the debug port behind a password."

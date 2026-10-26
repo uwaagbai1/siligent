@@ -90,3 +90,44 @@ def test_energy_integration():
 def test_energy_flags_readings_below_resolution():
     samples = [(0.0, 2e-6, 3.3), (1.0, 2e-6, 3.3)]
     assert integrate("INA219", 1e-4, samples).to_dict()["below_resolution"] is True
+
+
+class _InDebuggerMeter:
+    """Stands in for EnergyTrace: no polling during the window."""
+
+    name = "fake built-in meter"
+    resolution_a = 1e-7
+    no_polling = True
+    window_s = 0.05
+
+    def __init__(self, backend, finish_after_window: bool):
+        self.backend = backend
+        self.finish_after_window = finish_after_window
+        self.records = []
+
+    def start(self):
+        pass
+
+    def stop(self):
+        from siligent.meters.base import MeterReading
+
+        if self.finish_after_window:
+            # The firmware finishes only after the energy window has closed.
+            self.backend.on_resume = lambda b: b.write_memory(0x20000000, mailbox(tests=(("slow", 1, 9, 0),)))
+        return MeterReading(self.name, 0.05, 0, 1.0, 1e-4, 1e-4, 1e-4, 3.3, 1e-7)
+
+
+def test_run_longer_than_energy_window_falls_back_to_polling(probe, backend):
+    img = good_image()
+    img.symbols["bp_results"] = (0x20000000, 0x420)
+    r = run_tests(probe, img, meter=_InDebuggerMeter(backend, finish_after_window=True), timeout_s=2)
+    assert r["state"] == "done" and r["passed"] == 1
+    assert r["energy"]["measured"] is False and "window" in r["energy"]["detail"]
+
+
+def test_run_without_polling_reads_results_once(probe, backend):
+    img = good_image()
+    img.symbols["bp_results"] = (0x20000000, 0x420)
+    backend.on_resume = lambda b: b.write_memory(0x20000000, mailbox(tests=(("quick", 1, 9, 0),)))
+    r = run_tests(probe, img, meter=_InDebuggerMeter(backend, finish_after_window=False), timeout_s=2)
+    assert r["state"] == "done" and r["ok"] is True

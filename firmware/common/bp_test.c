@@ -1,4 +1,5 @@
 #include "bp_test.h"
+#include "bp_port.h"
 
 /* Must match MAGIC, HEADER and ENTRY in src/siligent/runner.py. */
 #define BP_MAGIC 0x42504C54u
@@ -22,11 +23,10 @@ typedef struct {
 
 volatile bp_results_t bp_results __attribute__((section(".bp_results"), used));
 
-extern const bp_case_t __bp_cases_start[], __bp_cases_end[];
+/* The host parses this layout byte for byte: 32-byte header, 32-byte entries. */
+typedef char bp_layout_check[(sizeof(bp_results_t) == 32u + 32u * BP_MAX_TESTS) ? 1 : -1];
 
-#define DEMCR (*(volatile uint32_t *)0xE000EDFCu)
-#define DWT_CTRL (*(volatile uint32_t *)0xE0001000u)
-#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004u)
+extern const bp_case_t __bp_cases_start[], __bp_cases_end[];
 
 static volatile uint32_t fail_line;
 
@@ -46,9 +46,7 @@ void bp_mark_crashed(void)
 
 void bp_run_all(uint32_t clock_hz)
 {
-    DEMCR |= (1u << 24); /* TRCENA: turn on the DWT unit */
-    DWT_CYCCNT = 0;
-    DWT_CTRL |= 1u; /* start the cycle counter */
+    bp_cycles_init();
 
     uint32_t n = (uint32_t)(__bp_cases_end - __bp_cases_start);
     if (n > BP_MAX_TESTS)
@@ -75,15 +73,15 @@ void bp_run_all(uint32_t clock_hz)
     bp_results.magic = BP_MAGIC; /* written last: the header is now valid */
 
     /* Cost of the timing itself, subtracted from every test. */
-    uint32_t t0 = DWT_CYCCNT;
-    uint32_t overhead = DWT_CYCCNT - t0;
+    uint32_t t0 = bp_cycles();
+    uint32_t overhead = bp_cycles() - t0;
 
     for (uint32_t i = 0; i < n; i++) {
         bp_results.current = i;
         fail_line = 0;
-        uint32_t start = DWT_CYCCNT;
+        uint32_t start = bp_cycles();
         __bp_cases_start[i].fn();
-        uint32_t cycles = DWT_CYCCNT - start;
+        uint32_t cycles = bp_cycles() - start;
         bp_results.entries[i].cycles = cycles > overhead ? cycles - overhead : 0;
         if (fail_line) {
             bp_results.entries[i].status = R_FAIL;

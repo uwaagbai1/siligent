@@ -16,10 +16,18 @@ KNOWN_PROBES: dict[tuple[int, int | None], str] = {
     (0x1366, None): "SEGGER J-Link",
     (0x0D28, 0x0204): "CMSIS-DAP (DAPLink)",
     (0x2E8A, 0x000C): "Raspberry Pi Debug Probe (CMSIS-DAP)",
+    (0x2047, 0x0013): "TI eZ-FET lite",
 }
 
-# Families Siligent can drive today. Others are reported but not opened.
-SUPPORTED_KINDS = {"ST-LINK/V2", "ST-LINK/V2-1", "STLINK-V3"}
+# Probe kinds Siligent can drive today, and the backend that drives each.
+# Others are reported but not opened.
+BACKEND_FOR_KIND = {
+    "ST-LINK/V2": "pyocd",
+    "ST-LINK/V2-1": "pyocd",
+    "STLINK-V3": "pyocd",
+    "TI eZ-FET lite": "msp430",
+}
+SUPPORTED_KINDS = set(BACKEND_FOR_KIND)
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,10 @@ class UsbProbe:
     serial: str
     product: str
     supported: bool
+
+    @property
+    def backend(self) -> str | None:
+        return BACKEND_FOR_KIND.get(self.kind)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -17,8 +17,6 @@ from ..rules import BoardRules
 from ..safety import SafetyGate
 from .base import ProbeBackend
 
-FLASH_PAGE = 2048
-
 
 class GuardedProbe:
     def __init__(
@@ -62,7 +60,7 @@ class GuardedProbe:
         return self.backend.read32(address)
 
     def device_id(self) -> int:
-        return self.backend.read32(self.rules.idcode_address) & 0xFFF
+        return self.backend.read32(self.rules.idcode_address) & self.rules.idcode_mask
 
     def write_memory(self, address: int, data: bytes) -> None:
         try:
@@ -89,7 +87,7 @@ class GuardedProbe:
                     f"The connected chip (device ID {hex(dev_id)}) is not a {self.rules.chip} "
                     f"({hex(self.rules.dev_id)}); these rules do not apply to it.",
                 )
-            self.gate.check_read_protection(self.backend.read32(self.rules.optr_address))
+            self._check_protection()
         except SafetyRefusal as e:
             if halted:
                 self.backend.resume()  # a refusal leaves the board as it was
@@ -108,6 +106,13 @@ class GuardedProbe:
         }
         self.log.record("flash", "ok", **result)
         return result
+
+    def _check_protection(self) -> None:
+        p = self.rules.protection
+        if p.kind == "erased":
+            self.gate.check_protection_bytes(self.backend.read_memory(p.address, p.size))
+        else:
+            self.gate.check_read_protection(self.backend.read32(p.address))
 
     def reset(self, halt: bool = False) -> None:
         self.backend.reset(halt=halt)
@@ -134,10 +139,11 @@ class GuardedProbe:
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         path = folder / f"pages-{stamp}.bin"
+        page = self.rules.snapshot_page
         with path.open("wb") as f:
             for seg in segments:
-                start = seg.address - (seg.address % FLASH_PAGE)
-                end = -(-seg.end // FLASH_PAGE) * FLASH_PAGE
+                start = seg.address - (seg.address % page)
+                end = -(-seg.end // page) * page
                 f.write(start.to_bytes(4, "little") + (end - start).to_bytes(4, "little"))
                 f.write(self.backend.read_memory(start, end - start))
         return path

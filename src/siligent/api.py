@@ -31,38 +31,70 @@ def _guard(fn):
 
 @_guard
 def detect(config: BenchConfig | None = None, connect: bool = True) -> dict:
-    """List debug probes and, for supported ones, identify the board and its rules."""
-    probes = [p.to_dict() for p in scan_usb()]
-    result: dict = {"ok": True, "probes": probes, "meters": scan_meters()}
-    if connect and any(p["supported"] for p in probes):
+    """List debug probes and, for each supported one, identify the board and its rules."""
+    import dataclasses
+
+    cfg = config or BenchConfig.load()
+    found = scan_usb()
+    result: dict = {"ok": True, "probes": [p.to_dict() for p in found], "meters": scan_meters()}
+    if not connect:
+        return result
+    boards = []
+    for p in (p for p in found if p.supported):
+        one = dataclasses.replace(cfg, probe_uid=p.serial, virtual=False)
         try:
-            with Bench(config) as bench:
-                result["board"] = {
-                    "name": bench.rules.name,
-                    "chip": bench.rules.chip,
-                    "dev_id": hex(bench.probe.device_id()),
-                    "probe_uid": bench.probe.backend.unique_id,
-                    "rules": bench.rules.source,
-                }
+            with Bench(one) as bench:
+                boards.append(
+                    {
+                        "probe_uid": p.serial,
+                        "probe": p.kind,
+                        "name": bench.rules.name,
+                        "chip": bench.rules.chip,
+                        "dev_id": hex(bench.probe.device_id()),
+                        "rules": bench.rules.source,
+                        "energy": "built-in (TI EnergyTrace)" if hasattr(bench._backend, "energy_meter") else None,
+                    }
+                )
         except SafetyRefusal as e:
-            result["board"] = e.to_dict()
+            boards.append({"probe_uid": p.serial, "probe": p.kind, **e.to_dict()})
+        except Exception as e:
+            boards.append({"probe_uid": p.serial, "probe": p.kind, "ok": False, "error": f"{type(e).__name__}: {e}"})
+    result["boards"] = boards
+    if cfg.probe_uid and not any(b["probe_uid"] == cfg.probe_uid for b in boards):
+        result["note"] = f"bench.toml pins probe {cfg.probe_uid}, which is not connected"
     return result
 
 
 @_guard
 def rules(board: str = "stm32l476rg") -> dict:
     """Show the safety rules for a board."""
-    return {"ok": True, **load_rules(board).summary()}
+    from .rules import builtin_boards
+
+    return {"ok": True, **load_rules(board).summary(), "built_in_boards": builtin_boards()}
+
+
+def _board_for(image, board: str | None, cfg: BenchConfig) -> str:
+    """Explicit board, then bench.toml, then the only built-in board for the image's architecture."""
+    if board or cfg.board:
+        return board or cfg.board
+    from .rules import builtin_boards
+
+    matches = [b for b in builtin_boards() if load_rules(b).arch == image.arch]
+    if len(matches) == 1:
+        return matches[0]
+    raise SiligentError(f"say which board to check against ({', '.join(builtin_boards())})")
 
 
 @_guard
-def check_image(path: str, board: str = "stm32l476rg", config: BenchConfig | None = None) -> dict:
+def check_image(path: str, board: str | None = None, config: BenchConfig | None = None) -> dict:
     """Check a firmware image against a board's rules without touching hardware."""
     cfg = config or BenchConfig.load()
     image = load_image(path)
-    gate = SafetyGate(load_rules(cfg.board or board), BenchState(cfg.flash_allowed))
+    name = _board_for(image, board, cfg)
+    gate = SafetyGate(load_rules(name), BenchState(cfg.flash_allowed))
     gate.check_image(image)
-    return {"ok": True, "image": path, "sha256": image.sha256, "bytes": image.size, "detail": "passes image checks"}
+    return {"ok": True, "image": path, "board": name, "sha256": image.sha256, "bytes": image.size,
+            "detail": "passes image checks"}
 
 
 @_guard
@@ -82,11 +114,26 @@ def restore(path: str, config: BenchConfig | None = None) -> dict:
 
     from .image import Image, Segment
 
-    raw = Path(path).read_bytes().rstrip(b"\xff")
-    raw += b"\xff" * (-len(raw) % 8)  # flash programs in 8-byte double words
+    import hashlib
+
+    data = Path(path).read_bytes()
     with Bench(config) as bench:
+        if getattr(bench.probe.backend, "erases", True):
+            # Flash is erased before programming, so trailing erased bytes need not be written.
+            raw = data.rstrip(b"\xff")
+            raw += b"\xff" * (-len(raw) % 8)  # flash programs in 8-byte double words
+        else:
+            # FRAM is written in place: write every byte, or newer code would survive past the end.
+            raw = data
         image = Image(path, [Segment(bench.rules.flash.start, raw)])
-        return bench.probe.flash(image)
+        result = bench.probe.flash(image)
+        back = bench.probe.read_memory(bench.rules.flash.start, len(raw))
+        result["verified"] = back == raw
+        result["restored_sha256"] = hashlib.sha256(back).hexdigest()
+        if not result["verified"]:
+            result["ok"] = False
+            result["error"] = "read-back after restore does not match the snapshot"
+        return result
 
 
 @_guard

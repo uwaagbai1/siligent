@@ -18,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="siligent", description="Safe, measured access to real hardware.")
     p.add_argument("--config", help="path to bench.toml (default: ./bench.toml or ~/.config/siligent/bench.toml)")
     p.add_argument("--virtual", action="store_true", help="use a Renode virtual board instead of real hardware")
+    p.add_argument("--probe", help="serial of the probe to use (see `siligent detect`) when several are connected")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("detect", help="find probes and identify the board")
@@ -26,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("board", nargs="?", default="stm32l476rg")
     c = sub.add_parser("check", help="check a firmware image against the rules, without hardware")
     c.add_argument("image")
+    c.add_argument("--board", help="board rules to check against (default: from the image)")
     f = sub.add_parser("flash", help="flash a firmware image")
     f.add_argument("image")
     rs = sub.add_parser("restore", help="put a full-flash snapshot (.bin) back on the chip")
@@ -46,12 +48,14 @@ def main(argv: list[str] | None = None) -> int:
     cfg = BenchConfig.load(a.config)
     if a.virtual:
         cfg.virtual = True
+    if a.probe:
+        cfg.probe_uid = a.probe
     if a.cmd == "detect":
         out = api.detect(cfg, connect=not a.no_connect)
     elif a.cmd == "rules":
         out = api.rules(a.board)
     elif a.cmd == "check":
-        out = api.check_image(a.image, config=cfg)
+        out = api.check_image(a.image, board=a.board, config=cfg)
     elif a.cmd == "flash":
         out = api.flash(a.image, config=cfg)
     elif a.cmd == "restore":
