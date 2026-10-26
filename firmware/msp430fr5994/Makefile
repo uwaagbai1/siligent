@@ -5,10 +5,11 @@
 TI_CGT ?= $(lastword $(sort $(wildcard $(HOME)/ti/ccs*/ccs/tools/compiler/ti-cgt-msp430_*)))
 TI_MSP_INC ?= $(lastword $(sort $(wildcard $(HOME)/ti/ccs*/ccs/ccs_base/msp430/include)))
 CC = $(TI_CGT)/bin/cl430
-BUILD = build
+BUILD ?= build
+DEBUG ?= -g
 
 CFLAGS = -vmspx --code_model=large --data_model=restricted --use_hw_mpy=F5 \
-         --define=__MSP430FR5994__ -O2 -g --c99 --diag_warning=225 --display_error_number \
+         --define=__MSP430FR5994__ -O2 $(DEBUG) --c99 --diag_warning=225 --display_error_number \
          --silicon_errata=CPU21 --silicon_errata=CPU22 --silicon_errata=CPU40 \
          -I../common -I$(TI_MSP_INC) -I$(TI_CGT)/include
 LDFLAGS = -z --rom_model --heap_size=0 --stack_size=256 --reread_libs \
@@ -40,7 +41,22 @@ $(BUILD)/demo_refused.elf: $(DEPS) demo_refused.c | $(BUILD)
 	mkdir -p $(BUILD)/refused
 	$(CC) $(CFLAGS) --obj_directory=$(BUILD)/refused $(SRC) demo_refused.c $(LDFLAGS) -m $(BUILD)/demo_refused.map -o $@
 
+# Copies kept in git, so CI can run them on the virtual board without TI's
+# compiler. Built from a copy in a fixed temporary folder, so they carry no
+# local paths. Rebuild after changing the firmware: make prebuilt
+PREBUILT_SRC = /tmp/siligent-prebuilt
+prebuilt: check-tools
+	rm -rf $(PREBUILT_SRC) && mkdir -p $(PREBUILT_SRC)/firmware
+	cp -r ../common $(PREBUILT_SRC)/firmware/common
+	mkdir -p $(PREBUILT_SRC)/firmware/msp430fr5994
+	cp Makefile *.c *.cmd $(PREBUILT_SRC)/firmware/msp430fr5994/
+	$(MAKE) -C $(PREBUILT_SRC)/firmware/msp430fr5994 TI_CGT=$(TI_CGT) TI_MSP_INC=$(TI_MSP_INC) DEBUG=--symdebug:none all
+	mkdir -p prebuilt
+	cp $(PREBUILT_SRC)/firmware/msp430fr5994/build/*.elf prebuilt/
+	rm -rf $(PREBUILT_SRC)
+	python3 ../../scripts/prebuilt_hash.py prebuilt/SOURCES.sha256
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all clean check-tools
+.PHONY: all clean check-tools prebuilt

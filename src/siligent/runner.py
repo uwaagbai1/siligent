@@ -260,6 +260,9 @@ def run_tests(
     if virtual:
         result["virtual"] = True
         result["note"] = "simulated in Renode: cycle counts come from simulated time, not the real chip"
+        limits = getattr(probe.backend, "limits", None)
+        if limits:
+            result["note"] += f"; on this virtual board {limits}"
     probe.log.record(
         "run_tests",
         result["state"],

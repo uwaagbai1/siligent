@@ -16,6 +16,12 @@ nice -n 19 make -j3 -C firmware/l476      # needs arm-none-eabi-gcc
 Virtual-board tests need [Renode](https://github.com/renode/renode/releases)
 1.17.0; they skip without it.
 
+The MSP430 firmware builds with TI's `cl430` from Code Composer Studio. If you
+change anything in `firmware/common/` or `firmware/msp430fr5994/`, run
+`nice -n 19 make -C firmware/msp430fr5994 prebuilt` and commit the copies in
+`prebuilt/`: CI tests those on the virtual board, since it has no TI compiler.
+`tests/test_prebuilt_firmware.py` fails if the sources changed without a rebuild.
+
 ## Ground rules
 
 - Every write and flash goes through `GuardedProbe` and the safety gate.
@@ -59,6 +65,19 @@ Virtual-board tests need [Renode](https://github.com/renode/renode/releases)
   cumulative energy counter is the reliable signal.
 - mspdebug 0.22 misreads newer TI libraries and asks for a firmware update
   that is not needed. Siligent talks to libmsp430 directly.
+
+## Lessons from the virtual MSP430 (Renode 1.17)
+
+- The MSP430X core starts at address 0 after a reset instead of reading the
+  reset vector, so the backend sets the PC from 0xFFFE itself.
+- RRCM, RRAM, RLAM and RRUM keep bits above the operand width and lose the
+  carry flag. TI's float library uses them, so 1.5 * 2.0 came out wrong. Each
+  one gets a CPU hook that does it right. Renode only checks for hooks after an
+  instruction, so the hook also handles rotates that follow it directly, and a
+  machine reset drops hooks, so they are added again after every reset.
+- An exception in a Python hook kills Renode outright.
+- Timer_A ignores the clock-source bits (every timer counts the platform's
+  fixed clock) and raises its overflow flag only in up mode.
 
 ## Adding a board
 

@@ -1,0 +1,58 @@
+// Virtual MSP430FR5994 for Renode. Renode ships an MSP430X core and a Timer_A
+// model but no FR5994, so this describes just enough of the chip to run
+// Siligent test firmware: the core, FRAM, RAM, the device ID and Timer_A0/A1.
+//
+// Limits of the model (the real chip differs):
+// - Both timers count a fixed 1 MHz clock, whatever source the firmware picks.
+//   That is SMCLK after reset; a timer set to ACLK runs about 100 times too fast.
+// - Renode's Timer_A raises its overflow interrupt only in up mode, so a timer in
+//   continuous mode wraps at 65,536 counts without telling the firmware.
+// - Clock system, watchdog, ports, power management: not modelled. Writes to
+//   them are ignored and reads return 0.
+//
+// Renode numbers the MSP430 interrupts from the top of the vector table:
+// interrupt n has its vector at 0xFFFE - 2n (TIMER0_A0 at 0xFFEA is 10).
+
+cpu: CPU.MSP430X @ sysbus
+    cpuType: "msp430x"
+
+// 256 KB FRAM, 0x4000-0x43FFF, including the vector table and the JTAG/BSL/IP
+// signatures at 0xFF80. The host fills it with 0xFF on start, as on a blank chip.
+fram: Memory.ArrayMemory @ sysbus 0x4000
+    size: 0x40000
+
+ram: Memory.ArrayMemory @ sysbus 0x1C00
+    size: 0x1000
+
+lea_ram: Memory.ArrayMemory @ sysbus 0x2C00
+    size: 0x1000
+
+info: Memory.ArrayMemory @ sysbus 0x1800
+    size: 0x200
+
+// Device descriptor (TLV). Device ID 0x82A1 at 0x1A04, as read from the real board.
+tlv: Memory.ArrayMemory @ sysbus 0x1A00
+    size: 0x100
+    init:
+        WriteWord 0x04 0x82A1
+        WriteWord 0x06 0x1021
+
+timer_a0: Timers.MSP430_Timer @ {
+        sysbus <0x340, +0x20>;
+        sysbus new Bus.BusMultiRegistration { address: 0x036E; size: 0x2; region: "interruptVector" }
+    }
+    cpu: cpu
+    acknowledgeInterrupt: 10
+    baseFrequency: 1_000_000
+    IRQ0->cpu@10
+    IRQ_IV->cpu@11
+
+timer_a1: Timers.MSP430_Timer @ {
+        sysbus <0x380, +0x20>;
+        sysbus new Bus.BusMultiRegistration { address: 0x03AE; size: 0x2; region: "interruptVector" }
+    }
+    cpu: cpu
+    acknowledgeInterrupt: 14
+    baseFrequency: 1_000_000
+    IRQ0->cpu@14
+    IRQ_IV->cpu@15

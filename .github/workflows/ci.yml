@@ -23,7 +23,7 @@ jobs:
       - run: pytest -q tests plugins/siligent-ppk2/tests
 
   virtual-board:
-    name: Firmware on the virtual L476 (Renode)
+    name: Firmware on the virtual L476 and MSP430 (Renode)
     runs-on: ubuntu-24.04
     env:
       RENODE_VERSION: "1.17.0"
@@ -37,7 +37,8 @@ jobs:
           python-version: "3.12"
       - name: Install the Arm toolchain
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
-      - name: Build the test firmware
+      - name: Build the L476 test firmware
+        # The MSP430 runs the prebuilt copies in firmware/msp430fr5994/prebuilt.
         run: make -j3 -C firmware/l476
       - name: Install Renode
         run: |

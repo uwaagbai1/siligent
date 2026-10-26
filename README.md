@@ -42,20 +42,35 @@ checks the voltage against the board's supply range before any plugin runs.
 
 ## Virtual board (Renode)
 
-Add `--virtual` to any command to use a simulated L476 instead of real
+Add `--virtual` to any command to use a simulated board instead of real
 hardware (agent tools take `virtual: true`). The same safety rules apply.
+Both boards have a virtual version; Siligent picks the one the firmware was
+built for (or the `board` in `bench.toml`).
 
 ```sh
 .venv/bin/siligent --virtual test firmware/l476/build/tests.elf
+.venv/bin/siligent --virtual test firmware/msp430fr5994/prebuilt/tests.elf   # no TI compiler needed
 ```
 
 - Needs [Renode](https://github.com/renode/renode/releases) (tested with
   1.17.0). It is found on PATH, in `~/.local/opt/renode-*/`, or via `RENODE=`.
-- Renode has no STM32L4 model, so `src/siligent/boards/renode/stm32l476rg.repl`
-  describes the core, cycle counter, flash, SRAM and ID registers. Peripherals
-  are not modelled yet.
-- Cycle counts are simulated: within about 10-30% of the real chip for the
-  example tests (the real chip is slower, mostly flash wait states). No energy.
+- Renode has no model of either chip, so `src/siligent/boards/renode/` describes
+  just enough of each to run test firmware: core, memory, device ID, and the
+  cycle counter (DWT on the L476, Timer_A0/A1 on the MSP430). Other peripherals
+  are not modelled; their limits are listed at the top of each `.repl` file.
+- Renode 1.17's MSP430X core gets the multi-bit rotate instructions wrong, which
+  breaks TI's software floating point. Siligent patches each one in the loaded
+  firmware with a CPU hook (`renode_backend.py`, tested in
+  `tests/test_msp430x_rotate_fix.py`).
+- Cycle counts are simulated, not timed on the chip, and every virtual result
+  says so in its `note`. No energy.
+  - L476: within about 10-30% of the real chip for the example tests (the real
+    chip is slower, mostly flash wait states).
+  - MSP430: about 40% below the real chip (10.5k cycles against 17.3k for the
+    example tests), because every instruction counts as one cycle while real
+    ones take 1-6. Counts also shift a little from run to run, and a test
+    longer than 65,535 cycles reports a wrong count: Renode's timer never
+    signals the overflow the cycle counter relies on.
 
 ## Quick start
 
@@ -175,7 +190,10 @@ STM32, Timer_A on the MSP430 (which has none).
 The virtual-board tests skip if Renode or the built firmware is missing. Set
 `SILIGENT_REQUIRE_RENODE=1` to make them fail instead, as CI does. CI
 (`.github/workflows/ci.yml`) runs the unit tests on Python 3.11-3.13 and runs
-the example firmware on the virtual board.
+the example firmware on both virtual boards. CI builds the L476 firmware; for
+the MSP430 it runs the copies in `firmware/msp430fr5994/prebuilt/`, built with
+TI's compiler from Code Composer Studio. After changing the firmware, rebuild
+them with `make -C firmware/msp430fr5994 prebuilt` and commit them.
 
 ## Licence
 

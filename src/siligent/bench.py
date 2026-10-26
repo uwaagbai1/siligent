@@ -228,7 +228,13 @@ class Bench:
 
         board = self.config.board or "stm32l476rg"
         rules = load_rules(board)
-        backend = RenodeBackend(board=Path(board).stem, renode=self.config.renode_path)
+        backend = RenodeBackend(
+            board=Path(board).stem,
+            renode=self.config.renode_path,
+            erased=(rules.flash.start, rules.flash.size),
+            reset_vector_address=rules.reset_vector_address if rules.arch == "msp430" else None,
+            arch=rules.arch,
+        )
         backend.open()
         # Every rule applies as on real hardware, except the bench check:
         # nothing physical is flashed, so no equipment can be harmed.

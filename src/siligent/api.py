@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from .bench import Bench, BenchConfig
 from .detect import scan_meters, scan_usb
 from .errors import SiligentError, SafetyRefusal
@@ -97,11 +99,20 @@ def check_image(path: str, board: str | None = None, config: BenchConfig | None 
             "detail": "passes image checks"}
 
 
+def _for_image(image, config: BenchConfig | None) -> BenchConfig:
+    """A virtual bench simulates the board the image was built for, unless one is named."""
+    cfg = config or BenchConfig.load()
+    if cfg.virtual and not cfg.board:
+        cfg = dataclasses.replace(cfg, board=_board_for(image, None, cfg))
+    return cfg
+
+
 @_guard
 def flash(path: str, config: BenchConfig | None = None) -> dict:
     """Flash a firmware image through the safety gate."""
-    with Bench(config) as bench:
-        return bench.probe.flash(load_image(path))
+    image = load_image(path)
+    with Bench(_for_image(image, config)) as bench:
+        return bench.probe.flash(image)
 
 
 @_guard
@@ -139,8 +150,9 @@ def restore(path: str, config: BenchConfig | None = None) -> dict:
 @_guard
 def run_tests(path: str, timeout_s: float = 10.0, config: BenchConfig | None = None) -> dict:
     """Flash test firmware, run it, and return pass/fail, cycles and energy."""
-    with Bench(config) as bench:
-        return _run_tests(bench.probe, load_image(path), meter=bench.meter, timeout_s=timeout_s)
+    image = load_image(path)
+    with Bench(_for_image(image, config)) as bench:
+        return _run_tests(bench.probe, image, meter=bench.meter, timeout_s=timeout_s)
 
 
 @_guard
