@@ -71,11 +71,19 @@ change anything in `firmware/common/` or `firmware/msp430fr5994/`, run
 - The MSP430X core starts at address 0 after a reset instead of reading the
   reset vector, so the backend sets the PC from 0xFFFE itself.
 - RRCM, RRAM, RLAM and RRUM keep bits above the operand width and lose the
-  carry flag. TI's float library uses them, so 1.5 * 2.0 came out wrong. Each
-  one gets a CPU hook that does it right. Renode only checks for hooks after an
-  instruction, so the hook also handles rotates that follow it directly, and a
-  machine reset drops hooks, so they are added again after every reset.
-- An exception in a Python hook kills Renode outright.
+  carry flag. TI's float library uses them, so 1.5 * 2.0 came out wrong.
+- The core counts every instruction as one step of time, so cycle counts came
+  out about 40% low.
+- Both are fixed in `boards/renode/SiligentMSP430X.cs`, a subclass of the
+  stock core that Renode compiles at start (`include` before the platform
+  file). It does the rotates itself and charges each instruction its cycles
+  from TI's tables (SLAU367P 4-8 to 4-19). It never reports more cycles than
+  Renode's scheduler asked for; leftovers carry into the next call.
+- An earlier fix used Python CPU hooks. Avoid them: an exception in one kills
+  Renode, `machine Reset` drops them, and `cpu Step` skips them.
+- Renode syncs peripherals with the CPU once per quantum (100 us by default),
+  and the MSP430 timer never asks for the exact time, so counts came out in
+  steps of 100 cycles. The backend sets a 1 us quantum for this board.
 - Timer_A ignores the clock-source bits (every timer counts the platform's
   fixed clock) and raises its overflow flag only in up mode.
 

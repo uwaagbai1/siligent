@@ -58,19 +58,20 @@ built for (or the `board` in `bench.toml`).
   just enough of each to run test firmware: core, memory, device ID, and the
   cycle counter (DWT on the L476, Timer_A0/A1 on the MSP430). Other peripherals
   are not modelled; their limits are listed at the top of each `.repl` file.
-- Renode 1.17's MSP430X core gets the multi-bit rotate instructions wrong, which
-  breaks TI's software floating point. Siligent patches each one in the loaded
-  firmware with a CPU hook (`renode_backend.py`, tested in
-  `tests/test_msp430x_rotate_fix.py`).
+- The virtual MSP430 runs on Siligent's own version of Renode's MSP430X core
+  (`src/siligent/boards/renode/SiligentMSP430X.cs`, compiled by Renode at
+  start). It charges each instruction the cycles TI's manual gives for it,
+  where Renode counts one per instruction, and it fixes the multi-bit rotates,
+  which Renode 1.17 gets wrong and TI's software floating point relies on.
+  Tested against the manual in `tests/test_msp430x_core.py`.
 - Cycle counts are simulated, not timed on the chip, and every virtual result
   says so in its `note`. No energy.
   - L476: within about 10-30% of the real chip for the example tests (the real
     chip is slower, mostly flash wait states).
-  - MSP430: about 40% below the real chip (10.5k cycles against 17.3k for the
-    example tests), because every instruction counts as one cycle while real
-    ones take 1-6. Counts also shift a little from run to run, and a test
-    longer than 65,535 cycles reports a wrong count: Renode's timer never
-    signals the overflow the cycle counter relies on.
+  - MSP430: within 2% of the real chip for the example tests (1585, 15055,
+    395 and 272 cycles against 1557, 15052, 393 and 270 on the LaunchPad).
+    A test longer than 65,535 cycles reports a wrong count: Renode's timer
+    never signals the overflow the cycle counter relies on.
 
 ## Quick start
 

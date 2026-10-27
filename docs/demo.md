@@ -40,4 +40,4 @@ After recording, comment out `flash_allowed` in `bench.toml` again.
 
 - Energy numbers: the power meter drivers have not run on a real meter yet.
 - Virtual cycle counts are simulated: within about 10-30% of the real chip on the
-  L476, about 40% low on the MSP430.
+  L476, within about 2% on the MSP430.

@@ -2,6 +2,10 @@
 // model but no FR5994, so this describes just enough of the chip to run
 // Siligent test firmware: the core, FRAM, RAM, the device ID and Timer_A0/A1.
 //
+// The core is SiligentMSP430X (SiligentMSP430X.cs next to this file): Renode's
+// MSP430X with TI's cycle cost per instruction and correct multi-bit rotates.
+// The backend loads it before this file.
+//
 // Limits of the model (the real chip differs):
 // - Both timers count a fixed 1 MHz clock, whatever source the firmware picks.
 //   That is SMCLK after reset; a timer set to ACLK runs about 100 times too fast.
@@ -13,7 +17,7 @@
 // Renode numbers the MSP430 interrupts from the top of the vector table:
 // interrupt n has its vector at 0xFFFE - 2n (TIMER0_A0 at 0xFFEA is 10).
 
-cpu: CPU.MSP430X @ sysbus
+cpu: CPU.SiligentMSP430X @ sysbus
     cpuType: "msp430x"
 
 // 256 KB FRAM, 0x4000-0x43FFF, including the vector table and the JTAG/BSL/IP

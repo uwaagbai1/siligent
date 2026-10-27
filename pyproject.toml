@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "siligent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lets AI agents flash, test and measure real microcontroller boards, behind safety rules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,7 @@ siligent-mcp = "siligent.mcp_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-siligent = ["boards/*.toml", "boards/renode/*.repl"]
+siligent = ["boards/*.toml", "boards/renode/*.repl", "boards/renode/*.cs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

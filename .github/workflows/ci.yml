@@ -48,6 +48,6 @@ jobs:
           mkdir -p "$HOME/renode" && tar -xzf renode.tar.gz -C "$HOME/renode" --strip-components=1
           echo "RENODE=$HOME/renode/renode" >> "$GITHUB_ENV"
       - run: pip install . pytest
-      - run: pytest -v tests/test_renode.py
+      - run: pytest -v tests/test_renode.py tests/test_msp430x_core.py
       - name: Demo script still runs
         run: python scripts/demo.py --fast
